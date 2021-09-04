@@ -1,0 +1,25 @@
+{
+    "name": "myqtokengenerator",
+    "version": "1.0.0",
+    "description": "Generates a MyQ OAuth token",
+    "main": "app.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "start": "node server.js"
+    },
+    "bin": "app.js",
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "colors": "^1.4.0",
+        "express": "^4.16.4",
+        "moment": "^2.24.0",
+        "node-datetime": "^2.1.2",
+        "node-fetch": "^2.3.0",
+        "node-html-parser": "^4.1.4",
+        "pkce-challenge": "^2.2.0",
+        "request": "^2.88.0",
+        "request-promise": "^4.2.4",
+        "ws": "^6.2.1"
+    }
+}

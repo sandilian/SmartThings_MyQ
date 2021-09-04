@@ -41,13 +41,13 @@ metadata {
 
 def on() {
 	log.debug "Light turned on"
-    parent.sendCommand(getMyQDeviceId(), "turnon")
+    parent.sendLampCommand(getMyQDeviceId(), "on")
     updateDeviceStatus("on")
 
 }
 def off() {
 	log.debug "Light turned off"
-    parent.sendCommand(getMyQDeviceId(), "turnoff")
+    parent.sendLampCommand(getMyQDeviceId(), "off")
     updateDeviceStatus("off")
 }
 

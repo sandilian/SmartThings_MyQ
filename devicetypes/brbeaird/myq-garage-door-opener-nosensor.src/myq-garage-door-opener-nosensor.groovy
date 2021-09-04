@@ -58,20 +58,20 @@ metadata {
 
 def open()  {
     openPrep()
-    parent.sendCommand(getMyQDeviceId(), "open")
+    parent.sendDoorCommand(getMyQDeviceId(), "open")
 }
 def close() {
     closePrep()
-    parent.sendCommand(getMyQDeviceId(), "close")
+    parent.sendDoorCommand(getMyQDeviceId(), "close")
 }
 
 def sendOpen()  {
     openPrep()
-    parent.sendCommand(getMyQDeviceId(), "open")
+    parent.sendDoorCommand(getMyQDeviceId(), "open")
 }
 def sendClose() {
     closePrep()
-    parent.sendCommand(getMyQDeviceId(), "close")
+    parent.sendDoorCommand(getMyQDeviceId(), "close")
 }
 
 def openPrep(){

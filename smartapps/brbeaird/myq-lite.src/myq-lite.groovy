@@ -5,7 +5,7 @@
  *
  *  MyQ Lite
  *
- *  Copyright 2020 Jason Mok/Brian Beaird/Barry Burke/RBoy Apps
+ *  Copyright 2021 Jason Mok/Brian Beaird/Barry Burke/RBoy Apps
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -20,7 +20,7 @@
 include 'asynchttp_v1'
 
 String appVersion() { return "3.1.7" }
-String appModified() { return "2021-08-02"}
+String appModified() { return "2021-09-04"}
 String appAuthor() { return "Brian Beaird" }
 String gitBranch() { return "brbeaird" }
 String getAppImg(imgName) 	{ return "https://raw.githubusercontent.com/${gitBranch()}/SmartThings_MyQ/master/icons/$imgName" }
@@ -36,9 +36,10 @@ definition(
 	iconX3Url: "https://raw.githubusercontent.com/brbeaird/SmartThings_MyQ/master/icons/myq@3x.png"
 )
 
+appSetting "MyQToken"
+
 preferences {
 	page(name: "mainPage", title: "MyQ Lite")
-    page(name: "prefLogIn", title: "MyQ")
     page(name: "loginResultPage", title: "MyQ")
 	page(name: "prefListDevices", title: "MyQ")
     page(name: "sensorPage", title: "MyQ")
@@ -55,10 +56,12 @@ def appInfoSect(sect=true)	{
 }
 
 def mainPage() {
-
     if (state.previousVersion == null){
         state.previousVersion = 0;
     }
+
+    if (!state.oauth)
+    	state.oauth = [:]
 
     //Brand new install (need to grab version info)
     if (!state.latestVersion){
@@ -83,9 +86,12 @@ def mainPage() {
     dynamicPage(name: "mainPage", nextPage: "", uninstall: false, install: true) {
         appInfoSect()
         def devs = refreshChildren()
+        def loginMessage = "Token loaded."
+        if (!appSettings.MyQToken)
+        	loginMessage = "Missing MyQToken in app settings. Login to the IDE and add it."
+
         section("MyQ Account"){
-            paragraph title: "", "Email: ${settings.username}"
-            href "prefLogIn", title: "", description: "Tap to modify account", params: [nextPageName: "mainPage"]
+            paragraph title: "", "Auth status: ${loginMessage}"
         }
         section("Connected Devices") {
         	paragraph title: "", "${devs?.size() ? devs?.join("\n") : "No MyQ Devices Connected"}"
@@ -156,34 +162,6 @@ def refreshChildren(){
 }
 
 /* Preferences */
-def prefLogIn(params) {
-    state.installMsg = ""
-    def showUninstall = username != null && password != null
-	return dynamicPage(name: "prefLogIn", title: "Connect to MyQ", nextPage:"loginResultPage", uninstall:false, install: false, submitOnChange: true) {
-		section("Login Credentials"){
-			input("username", "email", title: "Username", description: "MyQ Username (email address)")
-			input("password", "password", title: "Password", description: "MyQ password")
-		}
-	}
-}
-
-def loginResultPage(){
-	log.debug "login result next page: ${state.lastPage}"
-    if (forceLogin()) {
-    	if (state.lastPage == "prefListDevices")
-        	return prefListDevices()
-        else
-        	return mainPage()
-    }
-    else{
-    	return dynamicPage(name: "loginResultPage", title: "Login Error", install:false, uninstall:false) {
-			section(""){
-				paragraph "The username or password you entered is incorrect. Go back and try again. "
-			}
-		}
-    }
-}
-
 def prefUninstall() {
     log.debug "Removing MyQ Devices..."
     def msg = ""
@@ -257,7 +235,11 @@ def prefListDevices() {
 			}
 		}
 	} else {
-		return prefLogIn([nextPageName: "prefListDevices"])
+		return dynamicPage(name: "prefListDevices",  title: "Error!", install:false, uninstall:true) {
+				section(""){
+					paragraph "Login error: ${state.loginError}"
+				}
+			}
 	}
 }
 
@@ -839,7 +821,7 @@ def doorButtonOpenHandler(evt) {
         def doorDevice = getChildDevice(state.data[myQDeviceId].child)
         log.debug "Opening door."
         doorDevice.openPrep()
-        sendCommand(myQDeviceId, "open")
+        sendDoorCommand(myQDeviceId, "open")
         evt.getDevice().off()
     }catch(e){
     	def errMsg = "Warning: MyQ Open button command failed - ${e}"
@@ -856,7 +838,7 @@ def doorButtonCloseHandler(evt) {
         def doorDevice = getChildDevice(state.data[myQDeviceId].child)
         log.debug "Closing door."
         doorDevice.closePrep()
-        sendCommand(myQDeviceId, "close")
+        sendDoorCommand(myQDeviceId, "close")
         evt.getDevice().off()
 	}catch(e){
     	def errMsg = "Warning: MyQ Close button command failed - ${e}"
@@ -882,40 +864,60 @@ private forceLogin() {
 }
 
 private login() {
-	if (now() > state.session.expiration){
-    	log.warn "Token has expired. Logging in again."
-        doLogin()
+	if (!appSettings.MyQToken){
+    	log.warn "Missing refresh token in app settings."
+        return false
     }
-    else{
-    	return true;
-    }
+   if (!state.oauth.expiration || now() > state.oauth.expiration){
+       log.warn "Token has expired. Logging in again."
+       def refreshToken = state.oauth.refresh_token
+       if (!state.oauth.refresh_token || appSettings.MyQToken != state.oauth.originalToken){
+			log.debug "App setting change detected. Using MyQToken from settings."
+			refreshToken = appSettings.MyQToken
+       }
+       else{
+       	log.debug "Using stored refresh token."
+       }
+       return doLogin(refreshToken)
+   }
+   else{
+   	log.debug "No refresh needed."
+    return true
+   }
 }
 
-private doLogin() {
-    return apiPostLogin("/api/v5/Login", "{\"Username\":\"${settings.username}\",\"Password\": \"${settings.password}\"}" ) { response ->
-        if (response.data.SecurityToken != null) {
-            state.session.securityToken = response.data.SecurityToken
-            state.session.expiration = now() + (5*60*1000) // 5 minutes default
 
-            //Now get account ID
-            return apiGet(getAccountIdURL(), [expand: "account"]) { acctResponse ->
-                if (acctResponse.status == 200) {
-                    state.session.accountId = acctResponse.data.Account.Id
-                    log.debug "got accountid ${acctResponse.data.Account.Id}"
-                    return true
-                }
-                else{
-                	log.warn "Failed to get AccountId, login unsuccessful"
-                    return false
-                }
+
+private doLogin(refreshToken) {
+    try {
+        def tokenBody = [
+			"client_id": "IOS_CGI_MYQ",
+            "client_secret": "UD4DXnKyPWq25BSw",
+            "grant_type": "refresh_token",
+            "redirect_uri": "com.myqops://ios",
+            "scope": "MyQ_Residential offline_access",
+            "refresh_token": refreshToken
+        ]
+
+        //log.debug "Logging into ${getApiURL()}/${apiPath} headers: ${getMyQHeaders()}"
+        return httpPost([ uri: "https://partner-identity.myq-cloud.com", path: "/connect/token", headers: ["Content-Type": "application/x-www-form-urlencoded", "User-Agent": "null"], body: tokenBody ]) { response ->
+            log.debug "Got LOGIN POST response: STATUS: ${response.status}\n\nDATA: ${response.data}"
+            if (response.status == 200) {
+                state.oauth.access_token = response.data.access_token
+                state.oauth.refresh_token = response.data.refresh_token
+                state.oauth.expiration = now() + (response.data.expires_in * 1000)
+                state.oauth.originalToken = appSettings.MyQToken
+                return true
+            } else {
+                log.error "Unknown LOGIN POST status: ${response.status} data: ${response.data}"
+                state.loginMessage = "${response.status}-${response.data}"
             }
-            return true
-        } else {
-            log.warn "No security token found, login unsuccessful"
-            state.session = [ brandID: 0, brandName: settings.brand, securityToken: null, expiration: 0 ] // Reset token and expiration
             return false
         }
+    } catch (e)	{
+        log.warn "API POST Error: $e"
     }
+    return false
 }
 
 //Get devices listed on your MyQ account
@@ -1049,7 +1051,7 @@ def getHubID(){
 
 /* API Methods */
 private getDevicesURL(){
-	return "/api/v5.1/accounts/${state.session.accountId}/devices"
+    return "/api/v5.2/Accounts/${state.session.accountId}/Devices"
 }
 
 private getAccountIdURL(){
@@ -1062,18 +1064,12 @@ import groovy.transform.Field
 
 // get URL
 private getApiURL() {
-	return "https://api.myqdevice.com"
-}
-
-private getApiAppID() {
-    return "JVM/G9Nwih5BwKgNCjLxiFUQxQijAebyyg8QUHr7JOrP+tuPb8iHfRHKwTmDzHOu"
+    return "https://devices.myq-cloud.com"
 }
 
 private getMyQHeaders() {
 	return [
-        "SecurityToken": state.session.securityToken,
-        "MyQApplicationId": getApiAppID(),
-        "Content-Type": "application/json"
+        "Authorization": "Bearer ${state.oauth.access_token}"
     ]
 }
 
@@ -1085,11 +1081,7 @@ private apiGet(apiPath, apiQuery = [], callback = {}) {
         return
     }
     try {
-        def myHeaders = [
-        "SecurityToken": state.session.securityToken,
-        "MyQApplicationId": getApiAppID(),
-        "Content-Type": "application/json"
-    ]
+
         //log.debug "API Callout: GET ${getApiURL()}${apiPath} headers: ${getMyQHeaders()}"
         httpGet([ uri: getApiURL(), path: apiPath, headers: getMyQHeaders(), query: apiQuery ]) { response ->
             def result = isGoodResponse(response)
@@ -1115,8 +1107,8 @@ private apiPut(apiPath, apiBody = [], actionText = "") {
         return
     }
     try {
-        //log.debug "Calling out PUT ${getApiURL()}${apiPath}${apiBody} ${getMyQHeaders()}"
-        httpPut([ uri: getApiURL(), path: apiPath, headers: getMyQHeaders(), body: apiBody ]) { response ->
+        log.debug "Calling out PUT ${apiPath}${getMyQHeaders()}"
+        httpPut([ uri: apiPath, headers: getMyQHeaders()]) { response ->
             def result = isGoodResponse(response)
             if (result == 0) {
             	return
@@ -1137,7 +1129,7 @@ def isGoodResponse(response){
     log.debug "Got response: STATUS: ${response.status}"
 
     //Good response
-    if (response.status == 200 || response.status == 204) {
+    if (response.status == 200 || response.status == 204 || response.status == 202) {
         state.retryCount = 0 // Reset it
         return 0
     }
@@ -1187,13 +1179,15 @@ private apiPostLogin(apiPath, apiBody = [], callback = {}) {
     return false
 }
 
-
-
-
-// Send command to start or stop
-def sendCommand(myQDeviceId, command) {
+def sendDoorCommand(myQDeviceId, command) {
 	state.lastCommandSent = now()
-    apiPut("/api/v5.1/accounts/${state.session.accountId}/devices/${myQDeviceId}/actions", "{\"action_type\":\"${command}\"}", "${state.data[myQDeviceId].name}(${command})")
+    apiPut("https://account-devices-gdo.myq-cloud.com/api/v5.2/Accounts/${state.session.accountId}/door_openers/${myQDeviceId}/${command}")
+    return true
+}
+
+def sendLampCommand(myQDeviceId, command) {
+	state.lastCommandSent = now()
+    apiPut("https://account-devices-lamp.myq-cloud.com/api/v5.2/Accounts/${state.session.accountId}/lamps/${myQDeviceId}/${command}")
     return true
 }
 
