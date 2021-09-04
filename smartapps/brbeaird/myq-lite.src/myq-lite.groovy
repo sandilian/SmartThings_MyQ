@@ -75,13 +75,7 @@ def mainPage() {
         state.previousVersion = appVersion()
     }
 
-    //If fresh install, go straight to login page
-    if (!settings.username){
-    	state.lastPage = "prefListDevices"
-        return prefLogIn()
-    }
-
-    state.lastPage = "mainPage"
+     state.lastPage = "mainPage"
 
     dynamicPage(name: "mainPage", nextPage: "", uninstall: false, install: true) {
         appInfoSect()
@@ -868,7 +862,7 @@ private login() {
     	log.warn "Missing refresh token in app settings."
         return false
     }
-   if (!state.oauth.expiration || now() > state.oauth.expiration){
+   if (!state.oauth?.expiration || now() > state?.oauth.expiration){
        log.warn "Token has expired. Logging in again."
        def refreshToken = state.oauth.refresh_token
        if (!state.oauth.refresh_token || appSettings.MyQToken != state.oauth.originalToken){
@@ -901,7 +895,8 @@ private doLogin(refreshToken) {
 
         //log.debug "Logging into ${getApiURL()}/${apiPath} headers: ${getMyQHeaders()}"
         return httpPost([ uri: "https://partner-identity.myq-cloud.com", path: "/connect/token", headers: ["Content-Type": "application/x-www-form-urlencoded", "User-Agent": "null"], body: tokenBody ]) { response ->
-            log.debug "Got LOGIN POST response: STATUS: ${response.status}\n\nDATA: ${response.data}"
+            log.debug "Got LOGIN response: STATUS: ${response.status}"
+            //log.debug "Got LOGIN POST response: STATUS: ${response.status}\n\nDATA: ${response.data}"
             if (response.status == 200) {
                 state.oauth.access_token = response.data.access_token
                 state.oauth.refresh_token = response.data.refresh_token
@@ -1085,7 +1080,7 @@ private apiGet(apiPath, apiQuery = [], callback = {}) {
         //log.debug "API Callout: GET ${getApiURL()}${apiPath} headers: ${getMyQHeaders()}"
         httpGet([ uri: getApiURL(), path: apiPath, headers: getMyQHeaders(), query: apiQuery ]) { response ->
             def result = isGoodResponse(response)
-            log.debug "Got result: ${result}"
+            //log.debug "Got result: ${result}"
             if (result == 0) {
             	callback(response)
             }
@@ -1107,7 +1102,7 @@ private apiPut(apiPath, apiBody = [], actionText = "") {
         return
     }
     try {
-        log.debug "Calling out PUT ${apiPath}${getMyQHeaders()}"
+        //log.debug "Calling out PUT ${apiPath}${getMyQHeaders()}"
         httpPut([ uri: apiPath, headers: getMyQHeaders()]) { response ->
             def result = isGoodResponse(response)
             if (result == 0) {
