@@ -872,17 +872,19 @@ private login() {
        else{
        	log.debug "Using stored refresh token."
        }
-       return doLogin(refreshToken)
+       if (!doLogin(refreshToken)){
+			return false
+        }
    }
    else{
    	log.debug "No refresh needed."
-    //Now get account ID
-    	httpGet([ uri: "https://accounts.myq-cloud.com/api/v6.0/accounts", headers: getMyQHeaders()]) { response ->
-           log.debug "got accountid ${response.data}"
-           state.session.accountId = response.data.accounts[0].id
-       }
-    return true
    }
+   //Now get account ID
+    httpGet([ uri: "https://accounts.myq-cloud.com/api/v6.0/accounts", headers: getMyQHeaders()]) { response ->
+        log.debug "got accountid ${response.data}"
+        state.session.accountId = response.data.accounts[0].id
+    }
+    return true
 }
 
 
