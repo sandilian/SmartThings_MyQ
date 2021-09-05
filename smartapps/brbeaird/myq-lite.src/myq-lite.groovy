@@ -876,6 +876,11 @@ private login() {
    }
    else{
    	log.debug "No refresh needed."
+    //Now get account ID
+    	httpGet([ uri: "https://accounts.myq-cloud.com/api/v6.0/accounts", headers: getMyQHeaders()]) { response ->
+           log.debug "got accountid ${response.data}"
+           state.session.accountId = response.data.accounts[0].id
+       }
     return true
    }
 }
@@ -884,6 +889,11 @@ private login() {
 
 private doLogin(refreshToken) {
     try {
+
+        if (!state.oauth){
+        	state.oauth = [access_token: "", refresh_token: "", expiration: now() - 10000]
+		}
+
         def tokenBody = [
 			"client_id": "IOS_CGI_MYQ",
             "client_secret": "UD4DXnKyPWq25BSw",
