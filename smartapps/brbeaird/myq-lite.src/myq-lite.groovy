@@ -20,7 +20,7 @@
 include 'asynchttp_v1'
 
 String appVersion() { return "3.1.7" }
-String appModified() { return "2021-09-04"}
+String appModified() { return "2021-09-05"}
 String appAuthor() { return "Brian Beaird" }
 String gitBranch() { return "brbeaird" }
 String getAppImg(imgName) 	{ return "https://raw.githubusercontent.com/${gitBranch()}/SmartThings_MyQ/master/icons/$imgName" }
@@ -944,48 +944,6 @@ private getMyQDevices() {
                     def doorState = device.state.door_state
                     def updatedTime = device.last_update
 
-
-
-                    //def dni = device.MyQDeviceId
-					//def description = ''
-                    //def doorState = ''
-                    //def updatedTime = ''
-                    /*device.Attributes.each {
-                        if (it.AttributeDisplayName=="desc")
-                        {
-                        	description = it.Value
-                        }
-
-						if (it.AttributeDisplayName=="doorstate") {
-                        	doorState = it.Value
-                            updatedTime = it.UpdatedTime
-						}
-					}
-
-                    //Sometimes MyQ has duplicates. Check and see if we've seen this door before
-                        def doorToRemove = ""
-                        state.MyQDataPending.each { doorDNI, door ->
-                        	if (door.name == description){
-                            	log.debug "Duplicate door detected. Checking to see if this one is newer..."
-
-                                //If this instance is newer than the duplicate, pull the older one back out of the array
-                                if (door.lastAction < updatedTime){
-                                	log.debug "Yep, this one is newer."
-                                    doorToRemove = door
-                                }
-
-                                //If this door is the older one, clear out the description so it will be ignored
-                                else{
-                                	log.debug "Nope, this one is older. Stick with what we've got."
-                                    description = ""
-                                }
-                            }
-                        }
-                        if (doorToRemove){
-                        	log.debug "Removing older duplicate."
-                            state.MyQDataPending.remove(door)
-                        }*/
-
                     //Ignore any doors with blank descriptions
                     if (description != ''){
                         log.debug "Got valid door: ${description} type: ${device.device_family} status: ${doorState} type: ${device.device_type}"
@@ -1003,21 +961,6 @@ private getMyQDevices() {
 					def description = device.name
                     def lightState = device.state.lamp_state
                     def updatedTime = device.state.last_update
-
-
-                    /*
-                    device.Attributes.each {
-
-                        if (it.AttributeDisplayName=="desc")
-                        {
-                        	description = it.Value
-                        }
-
-						if (it.AttributeDisplayName=="lightstate") {
-                        	lightState = it.Value
-                            updatedTime = it.UpdatedTime
-						}
-					}*/
 
                     //Ignore any lights with blank descriptions
                     if (description && description != ''){
