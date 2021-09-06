@@ -21,6 +21,7 @@ metadata {
 		capability "Sensor"
 		capability "Switch"
         attribute "myQDeviceId", "string"
+        attribute "myQAccountId", "string"
 
 		command "updateDeviceStatus", ["string"]
 	}
@@ -41,13 +42,13 @@ metadata {
 
 def on() {
 	log.debug "Light turned on"
-    parent.sendLampCommand(getMyQDeviceId(), "on")
+    parent.sendLampCommand(getMyQDeviceId(), device.currentState("myQAccountId")?.value,"on")
     updateDeviceStatus("on")
 
 }
 def off() {
 	log.debug "Light turned off"
-    parent.sendLampCommand(getMyQDeviceId(), "off")
+    parent.sendLampCommand(getMyQDeviceId(), device.currentState("myQAccountId")?.value,"off")
     updateDeviceStatus("off")
 }
 
@@ -75,9 +76,10 @@ def getMyQDeviceId(){
     }
 }
 
-def updateMyQDeviceId(Id) {
-	log.debug "Setting MyQID to ${Id}"
+def updateMyQDeviceId(Id, account) {
+	log.debug "Setting MyQID to ${Id}, accountId to ${account}"
     sendEvent(name: "myQDeviceId", value: Id, display: true , displayed: true)
+    sendEvent(name: "myQAccountId", value: account, display: true , displayed: true)
 }
 
 def showVersion(){

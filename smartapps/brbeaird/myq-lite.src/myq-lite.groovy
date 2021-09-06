@@ -80,8 +80,11 @@ def mainPage() {
     dynamicPage(name: "mainPage", nextPage: "", uninstall: false, install: true) {
         appInfoSect()
         def devs = refreshChildren()
-        def loginMessage = "Token loaded."
-        if (!appSettings.MyQToken)
+        def lastRefresh = state.oauth?.lastRefresh ? "Last refresh: ${state.oauth?.lastRefresh}" : "(not yet refreshed)"
+        def loginMessage = "Token loaded. ${lastRefresh}"
+
+
+        if (!appSettings.MyQToken || appSettings.MyQToken == "")
         	loginMessage = "Missing MyQToken in app settings. Login to the IDE and add it."
 
         section("MyQ Account"){
@@ -457,6 +460,7 @@ def initialize() {
         }
         state.validatedLights.each { light ->
             if (light){
+                def myQAccountId = state.data[light].myQAccountId
                 def myQDeviceId = state.data[light].myQDeviceId
                 def DNI = [ app.id, "LightController", myQDeviceId ].join('|')
                 def lightName = state.data[light].name
@@ -482,6 +486,7 @@ def initialize() {
                 }
                 log.debug "Setting ${lightName} status to ${state.data[light].status}"
                 childLight.updateDeviceStatus(state.data[light].status)
+                childLight.updateMyQDeviceId(myQDeviceId, myQAccountId)
             }
         }
         state.lastSuccessfulStep = "Light device creation"
@@ -539,7 +544,7 @@ def verifyChildDeviceIds(){
                 //If no matching ID, try to match on name
                 else if (child.name == myQData.name || child.label == myQData.name){
                     log.debug "Found matching ID (via name) for ${child}"
-                    child.updateMyQDeviceId(myQId)	//Update child to new ID
+                    child.updateMyQDeviceId(myQId, myQData.myQAccountId)	//Update child to new ID
                     matchingId = myQId
                 }
             }
@@ -563,6 +568,7 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
     if (door){
 
     	def myQDeviceId = state.data[door].myQDeviceId
+        def myQAccountId = state.data[door].myQAccountId
         def DNI = [ app.id, "GarageDoorOpener", myQDeviceId ].join('|')
 
         //Has door's child device already been created?
@@ -572,6 +578,7 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
         if (existingDev){
         	log.debug "Child already exists for " + doorName + ". Sensor name is: " + sensor
             state.installMsg = state.installMsg + doorName + ": door device already exists. \r\n\r\n"
+            existingDev.updateMyQDeviceId(myQDeviceId, myQAccountId)
 
             if (prefUseLockType && existingType != lockTypeName){
                 try{
@@ -619,7 +626,7 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
                 try{
                     log.debug "Creating door with lock type"
                     childDoor = addChildDevice("brbeaird", lockTypeName, DNI, getHubID(), ["name": doorName])
-                    childDoor.updateMyQDeviceId(myQDeviceId)
+                    childDoor.updateMyQDeviceId(myQDeviceId, myQAccountId)
                     state.installMsg = state.installMsg + doorName + ": created lock device \r\n\r\n"
                 }
                 catch(physicalgraph.app.exception.UnknownDeviceTypeException e)
@@ -634,7 +641,7 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
                 try{
                     log.debug "Creating door with sensor"
                     childDoor = addChildDevice("brbeaird", sensorTypeName, DNI, getHubID(), ["name": doorName])
-                    childDoor.updateMyQDeviceId(myQDeviceId)
+                    childDoor.updateMyQDeviceId(myQDeviceId, myQAccountId)
                     state.installMsg = state.installMsg + doorName + ": created door device (sensor version) \r\n\r\n"
                 }
                 catch(physicalgraph.app.exception.UnknownDeviceTypeException e)
@@ -648,7 +655,7 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
                 try{
                     log.debug "Creating door with no sensor"
                     childDoor = addChildDevice("brbeaird", noSensorTypeName, DNI, getHubID(), ["name": doorName])
-                    childDoor.updateMyQDeviceId(myQDeviceId)
+                    childDoor.updateMyQDeviceId(myQDeviceId, myQAccountId)
                     state.installMsg = state.installMsg + doorName + ": created door device (no-sensor version) \r\n\r\n"
                 }
                 catch(physicalgraph.app.exception.UnknownDeviceTypeException e)
@@ -864,14 +871,15 @@ private login() {
     }
    if (!state.oauth?.expiration || now() > state?.oauth.expiration){
        log.warn "Token has expired. Logging in again."
-       def refreshToken = state.oauth.refresh_token
-       if (!state.oauth.refresh_token || appSettings.MyQToken != state.oauth.originalToken){
-			log.debug "App setting change detected. Using MyQToken from settings."
-			refreshToken = appSettings.MyQToken
-       }
-       else{
-       	log.debug "Using stored refresh token."
-       }
+       //def refreshToken = state.oauth.refresh_token
+       def refreshToken = appSettings.MyQToken
+    //    if (!state.oauth.refresh_token || appSettings.MyQToken != state.oauth.originalToken){
+	// 		log.debug "App setting change detected. Using MyQToken from settings."
+	// 		refreshToken = appSettings.MyQToken
+    //    }
+    //    else{
+    //    	log.debug "Using stored refresh token."
+    //    }
        if (!doLogin(refreshToken)){
 			return false
         }
@@ -879,11 +887,11 @@ private login() {
    else{
    	log.debug "No refresh needed."
    }
-   //Now get account ID
-    httpGet([ uri: "https://accounts.myq-cloud.com/api/v6.0/accounts", headers: getMyQHeaders()]) { response ->
-        log.debug "got accountid ${response.data}"
-        state.session.accountId = response.data.accounts[0].id
-    }
+//    //Now get account ID
+//     httpGet([ uri: "https://accounts.myq-cloud.com/api/v6.0/accounts", headers: getMyQHeaders()]) { response ->
+//         log.debug "got accountid ${response.data}"
+//         state.session.accountId = response.data.accounts[0].id
+//     }
     return true
 }
 
@@ -902,7 +910,7 @@ private doLogin(refreshToken) {
             "grant_type": "refresh_token",
             "redirect_uri": "com.myqops://ios",
             "scope": "MyQ_Residential offline_access",
-            "refresh_token": refreshToken
+            "refresh_token": appSettings.MyQToken
         ]
 
         //log.debug "Logging into ${getApiURL()}/${apiPath} headers: ${getMyQHeaders()}"
@@ -910,14 +918,17 @@ private doLogin(refreshToken) {
             log.debug "Got LOGIN response: STATUS: ${response.status}"
             //log.debug "Got LOGIN POST response: STATUS: ${response.status}\n\nDATA: ${response.data}"
             if (response.status == 200) {
+                state.oauth.lastRefresh = now()
                 state.oauth.access_token = response.data.access_token
+                appSettings.MyQToken = response.data.refresh_token
                 state.oauth.refresh_token = response.data.refresh_token
                 state.oauth.expiration = now() + (response.data.expires_in * 1000)
-                state.oauth.originalToken = appSettings.MyQToken
+                //state.oauth.originalToken = appSettings.MyQToken
                 return true
             } else {
                 log.error "Unknown LOGIN POST status: ${response.status} data: ${response.data}"
                 state.loginMessage = "${response.status}-${response.data}"
+                state.oauth.expiration = now() - 1000
             }
             return false
         }
@@ -932,50 +943,73 @@ private getMyQDevices() {
 	state.MyQDataPending = [:]
     state.unsupportedList = []
 
-	apiGet(getDevicesURL(), []) { response ->
-		if (response.status == 200) {
-			response.data.items.each { device ->
-                // 2 = garage door, 5 = gate, 7 = MyQGarage(no gateway), 9 = commercial door, 17 = Garage Door Opener WGDO
-				//if (device.MyQDeviceTypeId == 2||device.MyQDeviceTypeId == 5||device.MyQDeviceTypeId == 7||device.MyQDeviceTypeId == 17||device.MyQDeviceTypeId == 9) {
-                if (device.device_family == "garagedoor") {
-					log.debug "Found door: ${device.name}"
-                    def dni = device.serial_number
-					def description = device.name
-                    def doorState = device.state.door_state
-                    def updatedTime = device.last_update
+    //Get accounts
+    def accounts = httpGet([ uri: "https://accounts.myq-cloud.com/api/v6.0/accounts", headers: getMyQHeaders()]) { response ->
+        log.debug "got accountid ${response.data.accounts}"
+        //state.session.accountId = response.data.accounts[0].id
+        return response.data.accounts
+    }
+    if (!accounts){
+        log.warn "No accounts found."
+        return
+    }
 
-                    //Ignore any doors with blank descriptions
-                    if (description != ''){
-                        log.debug "Got valid door: ${description} type: ${device.device_family} status: ${doorState} type: ${device.device_type}"
-                        //log.debug "Storing door info: " + description + "type: " + device.device_family + " status: " + doorState +  " type: " + device.device_type
-                        state.MyQDataPending[dni] = [ status: doorState, lastAction: updatedTime, name: description, typeId: device.MyQDeviceTypeId, typeName: 'door', sensor: '', myQDeviceId: device.serial_number]
-                    }
-                    else{
-                    	log.debug "Door " + device.MyQDeviceId + " has blank desc field. This is unusual..."
-                    }
-				}
+    accounts.each { account ->
+        log.debug "Getting devices for account ${account.id}"
 
-                //Lights
-                else if (device.device_family == "lamp") {
-                    def dni = device.serial_number
-					def description = device.name
-                    def lightState = device.state.lamp_state
-                    def updatedTime = device.state.last_update
+        ///api/v5.2/Accounts/${state.session.accountId}/Devices
+        //https://devices.myq-cloud.com/api/v5.2/Accounts/${state.session.accountId}/Devices
+        def devices = httpGet([ uri: "https://devices.myq-cloud.com/api/v5.2/Accounts/${account.id}/Devices", headers: getMyQHeaders()]) { response ->
+            return response.data.items
+        }
 
-                    //Ignore any lights with blank descriptions
-                    if (description && description != ''){
-                        log.debug "Got valid light: ${description} type: ${device.device_family} status: ${lightState} type: ${device.device_type}"
-                        state.MyQDataPending[dni] = [ status: lightState, lastAction: updatedTime, name: description, typeName: 'light', type: device.MyQDeviceTypeId, myQDeviceId: device.serial_number ]
-                    }
-				}
+        //apiGet(getDevicesURL(), []) { response ->
+        devices.each { device ->
+        //response.data.items.each { device ->
+            // 2 = garage door, 5 = gate, 7 = MyQGarage(no gateway), 9 = commercial door, 17 = Garage Door Opener WGDO
+            //if (device.MyQDeviceTypeId == 2||device.MyQDeviceTypeId == 5||device.MyQDeviceTypeId == 7||device.MyQDeviceTypeId == 17||device.MyQDeviceTypeId == 9) {
+            if (device.device_family == "garagedoor") {
+                log.debug "Found door: ${device.name}"
+                def dni = device.serial_number
+                def description = device.name
+                def doorState = device.state.door_state
+                def updatedTime = device.last_update
 
-                //Unsupported devices
-                else{
-                    state.unsupportedList.add([name: device.name, typeId: device.device_family, typeName: device.device_type])
+                //Ignore any doors with blank descriptions
+                if (description != ''){
+                    log.debug "Got valid door: ${description} type: ${device.device_family} status: ${doorState} type: ${device.device_type}"
+                    //log.debug "Storing door info: " + description + "type: " + device.device_family + " status: " + doorState +  " type: " + device.device_type
+                    state.MyQDataPending[dni] = [ status: doorState, lastAction: updatedTime, name: description, typeId: device.MyQDeviceTypeId, typeName: 'door', sensor: '', myQDeviceId: device.serial_number, myQAccountId: account.id]
                 }
-			}
-		}
-	}
+                else{
+                    log.debug "Door " + device.MyQDeviceId + " has blank desc field. This is unusual..."
+                }
+            }
+
+            //Lights
+            else if (device.device_family == "lamp") {
+                def dni = device.serial_number
+                def description = device.name
+                def lightState = device.state.lamp_state
+                def updatedTime = device.state.last_update
+
+                //Ignore any lights with blank descriptions
+                if (description && description != ''){
+                    log.debug "Got valid light: ${description} type: ${device.device_family} status: ${lightState} type: ${device.device_type}"
+                    state.MyQDataPending[dni] = [ status: lightState, lastAction: updatedTime, name: description, typeName: 'light', type: device.MyQDeviceTypeId, myQDeviceId: device.serial_number, myQAccountId: account.id ]
+                }
+            }
+
+            //Unsupported devices
+            else{
+                state.unsupportedList.add([name: device.name, typeId: device.device_family, typeName: device.device_type])
+            }
+        }
+	//}
+
+    }
+
+
 }
 
 def getHubID(){
@@ -1129,15 +1163,18 @@ private apiPostLogin(apiPath, apiBody = [], callback = {}) {
     return false
 }
 
-def sendDoorCommand(myQDeviceId, command) {
-	state.lastCommandSent = now()
-    apiPut("https://account-devices-gdo.myq-cloud.com/api/v5.2/Accounts/${state.session.accountId}/door_openers/${myQDeviceId}/${command}")
+def sendDoorCommand(myQDeviceId, myQAccountId, command) {
+	if (!myQAccountId){
+        myQAccountId = state.session.accountId  //Bandaid for people who haven't tapped through the modify menu yet to assign accountId to door device
+    }
+    state.lastCommandSent = now()
+    apiPut("https://account-devices-gdo.myq-cloud.com/api/v5.2/Accounts/${myQAccountId}/door_openers/${myQDeviceId}/${command}")
     return true
 }
 
-def sendLampCommand(myQDeviceId, command) {
+def sendLampCommand(myQDeviceId, myQAccountId, command) {
 	state.lastCommandSent = now()
-    apiPut("https://account-devices-lamp.myq-cloud.com/api/v5.2/Accounts/${state.session.accountId}/lamps/${myQDeviceId}/${command}")
+    apiPut("https://account-devices-lamp.myq-cloud.com/api/v5.2/Accounts/${myQAccountId}/lamps/${myQDeviceId}/${command}")
     return true
 }
 
