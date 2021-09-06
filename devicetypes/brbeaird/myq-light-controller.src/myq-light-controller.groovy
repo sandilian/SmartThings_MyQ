@@ -42,14 +42,14 @@ metadata {
 
 def on() {
 	log.debug "Light turned on"
-    parent.sendLampCommand(getMyQDeviceId(), device.currentState("myQAccountId")?.value,"on")
-    updateDeviceStatus("on")
+    if (parent.sendLampCommand(getMyQDeviceId(), device.currentState("myQAccountId")?.value,"on"))
+    	updateDeviceStatus("on")
 
 }
 def off() {
 	log.debug "Light turned off"
-    parent.sendLampCommand(getMyQDeviceId(), device.currentState("myQAccountId")?.value,"off")
-    updateDeviceStatus("off")
+    if (parent.sendLampCommand(getMyQDeviceId(), device.currentState("myQAccountId")?.value,"off"))
+    	updateDeviceStatus("off")
 }
 
 def updateDeviceStatus(status) {

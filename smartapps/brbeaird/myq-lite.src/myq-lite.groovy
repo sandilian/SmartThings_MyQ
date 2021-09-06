@@ -80,7 +80,8 @@ def mainPage() {
     dynamicPage(name: "mainPage", nextPage: "", uninstall: false, install: true) {
         appInfoSect()
         def devs = refreshChildren()
-        def lastRefresh = state.oauth?.lastRefresh ? "Last refresh: ${state.oauth?.lastRefresh}" : "(not yet refreshed)"
+        def refreshMinutesAgo = state.oauth?.lastRefresh ? (now() - state.oauth?.lastRefresh) / 1000 / 60 : 0
+        def lastRefresh = state.oauth?.lastRefresh ? "Last refresh: ${Math.round(refreshMinutesAgo)} minutes ago." : "(not yet refreshed)"
         def loginMessage = "Token loaded. ${lastRefresh}"
 
 
@@ -1088,23 +1089,28 @@ private apiPut(apiPath, apiBody = [], actionText = "") {
         log.error "Unable to complete PUT, login failed"
         sendNotificationEvent("Warning: MyQ command failed due to bad login.")
         if (prefDoorErrorNotify){sendPush("Warning: MyQ command failed due to bad login.")}
-        return
+        return false
     }
     try {
         //log.debug "Calling out PUT ${apiPath}${getMyQHeaders()}"
         httpPut([ uri: apiPath, headers: getMyQHeaders()]) { response ->
             def result = isGoodResponse(response)
             if (result == 0) {
-            	return
+            	return true
             }
             else if (result == 1){
             	apiPut(apiPath, apiBody, callback) // Try again
             }
         }
     } catch (e)	{
-        log.error "API PUT Error: $e"
-        sendNotificationEvent("Warning: MyQ command failed - ${e}")
+        if (e.response.data?.description == "Device already in desired state."){
+            log.debug "Device already in desired state."
+        	return true
+		}
+        log.error "API PUT Error: ${e.response.status} ${e.response.data}"
+        sendNotificationEvent("Warning: MyQ command failed - ${e.response.status}")
         if (prefDoorErrorNotify){sendPush("Warning: MyQ command failed for ${actionText} - ${e}")}
+        return false
     }
 }
 
@@ -1168,14 +1174,13 @@ def sendDoorCommand(myQDeviceId, myQAccountId, command) {
         myQAccountId = state.session.accountId  //Bandaid for people who haven't tapped through the modify menu yet to assign accountId to door device
     }
     state.lastCommandSent = now()
-    apiPut("https://account-devices-gdo.myq-cloud.com/api/v5.2/Accounts/${myQAccountId}/door_openers/${myQDeviceId}/${command}")
+    return apiPut("https://account-devices-gdo.myq-cloud.com/api/v5.2/Accounts/${myQAccountId}/door_openers/${myQDeviceId}/${command}")
     return true
 }
 
 def sendLampCommand(myQDeviceId, myQAccountId, command) {
 	state.lastCommandSent = now()
-    apiPut("https://account-devices-lamp.myq-cloud.com/api/v5.2/Accounts/${myQAccountId}/lamps/${myQDeviceId}/${command}")
-    return true
+    return apiPut("https://account-devices-lamp.myq-cloud.com/api/v5.2/Accounts/${myQAccountId}/lamps/${myQDeviceId}/${command}")
 }
 
 

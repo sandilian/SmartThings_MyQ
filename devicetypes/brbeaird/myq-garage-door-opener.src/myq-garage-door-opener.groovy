@@ -104,13 +104,13 @@ metadata {
 
 def on() {
     log.debug "Turning door on!"
-    open()
-    sendEvent(name: "switch", value: "on", isStateChange: true, display: true, displayed: true)
+    if (open())
+    	sendEvent(name: "switch", value: "on", isStateChange: true, display: true, displayed: true)
 }
 def off() {
     log.debug "Turning door off!"
-    close()
-	sendEvent(name: "switch", value: "off", isStateChange: true, display: true, displayed: true)
+    if (close())
+		sendEvent(name: "switch", value: "off", isStateChange: true, display: true, displayed: true)
 }
 
 def push() {
@@ -126,9 +126,8 @@ def push() {
 def open()  {
 	log.debug "Garage door open command called."
     parent.notify("Garage door open command called.")
-    updateDeviceStatus("opening")
-    parent.sendDoorCommand(getMyQDeviceId(), device.currentState("myQAccountId").value, "open")
-
+    if (parent.sendDoorCommand(getMyQDeviceId(), device.currentState("myQAccountId").value, "open"))
+    	updateDeviceStatus("opening")
     runIn(20, refresh, [overwrite: true])	//Force a sync with tilt sensor after 20 seconds
 }
 def close() {
