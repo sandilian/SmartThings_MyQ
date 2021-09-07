@@ -819,34 +819,26 @@ def sensorHandler(evt) {
 def doorButtonOpenHandler(evt) {
     try{
         log.debug "Door open button push detected: Event name  " + evt.name + " value: " + evt.value   + " deviceID: " + evt.deviceId + " DNI: " + evt.getDevice().deviceNetworkId
+        evt.getDevice().off()
         def myQDeviceId = evt.getDevice().deviceNetworkId.replace(" Opener", "")
         def doorDevice = getChildDevice(state.data[myQDeviceId].child)
-        log.debug "Opening door."
-        doorDevice.openPrep()
-        sendDoorCommand(myQDeviceId, "open")
-        evt.getDevice().off()
+        doorDevice.open()
     }catch(e){
     	def errMsg = "Warning: MyQ Open button command failed - ${e}"
         log.error errMsg
-        sendNotificationEvent(errMsg)
-        if (prefDoorErrorNotify){sendPush(errMsg)}
     }
 }
 
 def doorButtonCloseHandler(evt) {
 	try{
 		log.debug "Door close button push detected: Event name  " + evt.name + " value: " + evt.value   + " deviceID: " + evt.deviceId + " DNI: " + evt.getDevice().deviceNetworkId
+        evt.getDevice().off()
         def myQDeviceId = evt.getDevice().deviceNetworkId.replace(" Closer", "")
         def doorDevice = getChildDevice(state.data[myQDeviceId].child)
-        log.debug "Closing door."
-        doorDevice.closePrep()
-        sendDoorCommand(myQDeviceId, "close")
-        evt.getDevice().off()
+        doorDevice.close()
 	}catch(e){
     	def errMsg = "Warning: MyQ Close button command failed - ${e}"
         log.error errMsg
-        sendNotificationEvent(errMsg)
-        if (prefDoorErrorNotify){sendPush(errMsg)}
     }
 }
 
@@ -1014,7 +1006,7 @@ private apiPut(apiPath, apiBody = [], actionText = "") {
     if (!login()){
         log.error "Unable to complete PUT, login failed"
         sendNotificationEvent("Warning: MyQ command failed due to bad login.")
-        if (prefDoorErrorNotify){sendPush("Warning: MyQ command failed due to bad login.")}
+        //if (prefDoorErrorNotify){sendPush("Warning: MyQ command failed due to bad login.")}
         return false
     }
     try {
@@ -1030,7 +1022,6 @@ private apiPut(apiPath, apiBody = [], actionText = "") {
             log.debug "Device already in desired state. Command ignored."
         	return true
 		}
-        log.error "API PUT Error: ${e.response.status} ${e.response.data}"
         sendNotificationEvent("Warning: MyQ command failed - ${e.response.status}")
         if (prefDoorErrorNotify){sendPush("Warning: MyQ command failed for ${actionText} - ${e}")}
         return false
