@@ -85,6 +85,11 @@ const getToken = async () => {
         }, true);
 
         let redirectUrl = loginResponse.headers.get("location")
+        if (!redirectUrl){
+            logger.error('MyQ login failed with email/password combination.')
+          return null;
+        }
+
         // Cleanup the cookie so we can complete the login process by removing spurious additions
         // to the cookie that gets returned by the myQ API.
         const redirectCookie = trimSetCookie(loginResponse.headers.raw()["set-cookie"]);
@@ -99,9 +104,11 @@ const getToken = async () => {
           redirect: "manual"
         }, true);
 
-
-
         const redirectResponseUrl = new URL(redirectResponse.headers.get("location") ?? "");
+        if (!redirectResponseUrl){
+            logger.error('Oauth redirect failed.')
+          return null;
+        }
 
         // Create the request to get our access and refresh tokens.
         const tokenRequestBody = new URLSearchParams({
@@ -130,7 +137,7 @@ const getToken = async () => {
         logger.info('Success! Copy and paste the token below into the MyQToken app setting of the SmartApp.')
         logger.info(token.refresh_token)
       } catch (error) {
-        console.error(error.message);
+        logger.error(error.message);
       }
 
       rl.question('Press any key to exit. ', (key) => {
