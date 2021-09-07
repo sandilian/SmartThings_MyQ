@@ -20,7 +20,7 @@
 include 'asynchttp_v1'
 
 String appVersion() { return "3.1.7" }
-String appModified() { return "2021-09-05"}
+String appModified() { return "2021-09-06"}
 String appAuthor() { return "Brian Beaird" }
 String gitBranch() { return "brbeaird" }
 String getAppImg(imgName) 	{ return "https://raw.githubusercontent.com/${gitBranch()}/SmartThings_MyQ/master/icons/$imgName" }
@@ -858,13 +858,6 @@ def getSelectedDevices( settingsName ) {
 }
 
 /* Access Management */
-private forceLogin() {
-	//Reset token and expiry
-    log.warn "forceLogin: Refreshing login token"
-	state.session = [ brandID: 0, brandName: settings.brand, securityToken: null, expiration: 0 ]
-	return doLogin()
-}
-
 private login() {
 	if (!appSettings.MyQToken){
     	log.warn "Missing refresh token in app settings."
@@ -872,15 +865,7 @@ private login() {
     }
    if (!state.oauth?.expiration || now() > state?.oauth.expiration){
        log.warn "Token has expired. Logging in again."
-       //def refreshToken = state.oauth.refresh_token
        def refreshToken = appSettings.MyQToken
-    //    if (!state.oauth.refresh_token || appSettings.MyQToken != state.oauth.originalToken){
-	// 		log.debug "App setting change detected. Using MyQToken from settings."
-	// 		refreshToken = appSettings.MyQToken
-    //    }
-    //    else{
-    //    	log.debug "Using stored refresh token."
-    //    }
        if (!doLogin(refreshToken)){
 			return false
         }
@@ -888,21 +873,15 @@ private login() {
    else{
    	log.debug "No refresh needed."
    }
-//    //Now get account ID
-//     httpGet([ uri: "https://accounts.myq-cloud.com/api/v6.0/accounts", headers: getMyQHeaders()]) { response ->
-//         log.debug "got accountid ${response.data}"
-//         state.session.accountId = response.data.accounts[0].id
-//     }
     return true
 }
-
 
 
 private doLogin(refreshToken) {
     try {
 
         if (!state.oauth){
-        	state.oauth = [access_token: "", refresh_token: "", expiration: now() - 10000]
+        	state.oauth = [access_token: "", expiration: now() - 10000]
 		}
 
         def tokenBody = [
@@ -914,7 +893,6 @@ private doLogin(refreshToken) {
             "refresh_token": appSettings.MyQToken
         ]
 
-        //log.debug "Logging into ${getApiURL()}/${apiPath} headers: ${getMyQHeaders()}"
         return httpPost([ uri: "https://partner-identity.myq-cloud.com", path: "/connect/token", headers: ["Content-Type": "application/x-www-form-urlencoded", "User-Agent": "null"], body: tokenBody ]) { response ->
             log.debug "Got LOGIN response: STATUS: ${response.status}"
             //log.debug "Got LOGIN POST response: STATUS: ${response.status}\n\nDATA: ${response.data}"
@@ -922,9 +900,7 @@ private doLogin(refreshToken) {
                 state.oauth.lastRefresh = now()
                 state.oauth.access_token = response.data.access_token
                 appSettings.MyQToken = response.data.refresh_token
-                state.oauth.refresh_token = response.data.refresh_token
                 state.oauth.expiration = now() + (response.data.expires_in * 1000)
-                //state.oauth.originalToken = appSettings.MyQToken
                 return true
             } else {
                 log.error "Unknown LOGIN POST status: ${response.status} data: ${response.data}"
@@ -946,8 +922,6 @@ private getMyQDevices() {
 
     //Get accounts
     def accounts = httpGet([ uri: "https://accounts.myq-cloud.com/api/v6.0/accounts", headers: getMyQHeaders()]) { response ->
-        log.debug "got accountid ${response.data.accounts}"
-        //state.session.accountId = response.data.accounts[0].id
         return response.data.accounts
     }
     if (!accounts){
@@ -958,15 +932,10 @@ private getMyQDevices() {
     accounts.each { account ->
         log.debug "Getting devices for account ${account.id}"
 
-        ///api/v5.2/Accounts/${state.session.accountId}/Devices
-        //https://devices.myq-cloud.com/api/v5.2/Accounts/${state.session.accountId}/Devices
         def devices = httpGet([ uri: "https://devices.myq-cloud.com/api/v5.2/Accounts/${account.id}/Devices", headers: getMyQHeaders()]) { response ->
             return response.data.items
         }
-
-        //apiGet(getDevicesURL(), []) { response ->
         devices.each { device ->
-        //response.data.items.each { device ->
             // 2 = garage door, 5 = gate, 7 = MyQGarage(no gateway), 9 = commercial door, 17 = Garage Door Opener WGDO
             //if (device.MyQDeviceTypeId == 2||device.MyQDeviceTypeId == 5||device.MyQDeviceTypeId == 7||device.MyQDeviceTypeId == 17||device.MyQDeviceTypeId == 9) {
             if (device.device_family == "garagedoor") {
@@ -1006,11 +975,7 @@ private getMyQDevices() {
                 state.unsupportedList.add([name: device.name, typeId: device.device_family, typeName: device.device_type])
             }
         }
-	//}
-
     }
-
-
 }
 
 def getHubID(){
@@ -1034,53 +999,14 @@ def getHubID(){
     }
 }
 
-/* API Methods */
-private getDevicesURL(){
-    return "/api/v5.2/Accounts/${state.session.accountId}/Devices"
-}
-
-private getAccountIdURL(){
-	return "/api/v5/My"
-}
-
 import groovy.transform.Field
 
 @Field final MAX_RETRIES = 1 // Retry count before giving up
-
-// get URL
-private getApiURL() {
-    return "https://devices.myq-cloud.com"
-}
 
 private getMyQHeaders() {
 	return [
         "Authorization": "Bearer ${state.oauth.access_token}"
     ]
-}
-
-
-// HTTP GET call (Get Devices)
-private apiGet(apiPath, apiQuery = [], callback = {}) {
-    if (!login()){
-        log.error "Unable to complete GET, login failed"
-        return
-    }
-    try {
-
-        //log.debug "API Callout: GET ${getApiURL()}${apiPath} headers: ${getMyQHeaders()}"
-        httpGet([ uri: getApiURL(), path: apiPath, headers: getMyQHeaders(), query: apiQuery ]) { response ->
-            def result = isGoodResponse(response)
-            //log.debug "Got result: ${result}"
-            if (result == 0) {
-            	callback(response)
-            }
-            /*else if (result == 1){
-            	apiGet(apiPath, apiQuery, callback) // Try again
-            }*/
-        }
-    }	catch (e)	{
-        log.error "API GET Error: $e"
-    }
 }
 
 // HTTP PUT call (Send commands)
@@ -1093,18 +1019,15 @@ private apiPut(apiPath, apiBody = [], actionText = "") {
     }
     try {
         //log.debug "Calling out PUT ${apiPath}${getMyQHeaders()}"
-        httpPut([ uri: apiPath, headers: getMyQHeaders()]) { response ->
-            def result = isGoodResponse(response)
-            if (result == 0) {
-            	return true
+        return httpPut([ uri: apiPath, headers: getMyQHeaders()]) { response ->
+            if (response.status != 200 && response.status != 204 && response.status != 202) {
+                log.warn "Unexpected command response - ${response.status} ${response.data}"
             }
-            else if (result == 1){
-            	apiPut(apiPath, apiBody, callback) // Try again
-            }
+            return true;
         }
     } catch (e)	{
         if (e.response.data?.description == "Device already in desired state."){
-            log.debug "Device already in desired state."
+            log.debug "Device already in desired state. Command ignored."
         	return true
 		}
         log.error "API PUT Error: ${e.response.status} ${e.response.data}"
@@ -1112,61 +1035,6 @@ private apiPut(apiPath, apiBody = [], actionText = "") {
         if (prefDoorErrorNotify){sendPush("Warning: MyQ command failed for ${actionText} - ${e}")}
         return false
     }
-}
-
-//Check response and retry login if needed
-def isGoodResponse(response){
-    log.debug "Got response: STATUS: ${response.status}"
-
-    //Good response
-    if (response.status == 200 || response.status == 204 || response.status == 202) {
-        state.retryCount = 0 // Reset it
-        return 0
-    }
-
-    //Bad token response
-    else if(response.status == 401){
-    	if (state.retryCount <= MAX_RETRIES) {
-            state.retryCount = (state.retryCount ?: 0) + 1
-            log.warn "GET: Login expired, logging in again"
-            if (forceLogin()){
-                returnCode = 1
-                log.warn "GET: Re-login successful."
-            }
-            else{
-                returnCode = -1
-                log.warn "GET: Re-login failed."
-            }
-        } else {
-            log.warn "Too many retries, dropping request"
-        }
-    }
-
-    //Unknown response
-    else{
-    	log.error "Unknown status: ${response.status} ${response.data}"
-        return -1
-    }
-    return returnCode
-}
-
-// HTTP POST call (Login)
-private apiPostLogin(apiPath, apiBody = [], callback = {}) {
-    try {
-        //log.debug "Logging into ${getApiURL()}/${apiPath} headers: ${getMyQHeaders()}"
-        return httpPost([ uri: getApiURL(), path: apiPath, headers: getMyQHeaders(), body: apiBody ]) { response ->
-            log.debug "Got LOGIN POST response: STATUS: ${response.status}\n\nDATA: ${response.data}"
-            if (response.status == 200) {
-                	return callback(response)
-            } else {
-                log.error "Unknown LOGIN POST status: ${response.status} data: ${response.data}"
-            }
-            return false
-        }
-    } catch (e)	{
-        log.warn "API POST Error: $e"
-    }
-    return false
 }
 
 def sendDoorCommand(myQDeviceId, myQAccountId, command) {
