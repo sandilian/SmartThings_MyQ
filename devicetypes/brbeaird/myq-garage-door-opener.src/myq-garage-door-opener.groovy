@@ -103,12 +103,10 @@ metadata {
 }
 
 def on() {
-    log.debug "Turning door on!"
     if (open())
     	sendEvent(name: "switch", value: "on", isStateChange: true, display: true, displayed: true)
 }
 def off() {
-    log.debug "Turning door off!"
     if (close())
 		sendEvent(name: "switch", value: "off", isStateChange: true, display: true, displayed: true)
 }
@@ -124,14 +122,12 @@ def push() {
 }
 
 def open()  {
-	log.debug "Garage door open command called."
     parent.notify("Garage door open command called.")
     if (parent.sendDoorCommand(getMyQDeviceId(), device.currentState("myQAccountId").value, "open"))
     	updateDeviceStatus("opening")
     runIn(20, refresh, [overwrite: true])	//Force a sync with tilt sensor after 20 seconds
 }
 def close() {
-	log.debug "Garage door close command called."
     parent.notify("Garage door close command called.")
 	parent.sendDoorCommand(getMyQDeviceId(), device.currentState("myQAccountId").value, "close")
 //	updateDeviceStatus("closing")			// Now handled in the parent (in case we have an Acceleration sensor, we can handle "waiting" state)
@@ -236,7 +232,7 @@ def updateDeviceSensor(sensor) {
 
 def updateSensorBattery(batteryValue) {
 	def newBattery = batteryValue
-    if (!batteryValue){
+    if (!batteryValue || batteryValue == 1){
     	newBattery = 100
     }
     sendEvent(name: "battery", value: newBattery, display: true, displayed: true)
