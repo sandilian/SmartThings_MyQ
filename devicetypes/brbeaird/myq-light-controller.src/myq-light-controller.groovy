@@ -83,5 +83,5 @@ def updateMyQDeviceId(Id, account) {
 }
 
 def showVersion(){
-	return "3.1.1"
+	return "4.0.0"
 }

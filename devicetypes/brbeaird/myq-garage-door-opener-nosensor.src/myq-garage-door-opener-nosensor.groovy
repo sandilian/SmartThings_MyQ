@@ -114,5 +114,5 @@ def log(msg){
 }
 
 def showVersion(){
-	return "3.2.0"
+	return "4.0.0"
 }
