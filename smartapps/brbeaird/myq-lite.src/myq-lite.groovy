@@ -17,6 +17,9 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  */
+import java.security.MessageDigest
+import groovy.transform.Field
+
 include 'asynchttp_v1'
 
 String appVersion() { return "4.0.1" }
@@ -1061,4 +1064,417 @@ def stateCleanup(){
 //Available to be called from child devices for special logging
 def notify(message){
 	sendNotificationEvent(message)
+}
+
+
+private getNewAccessToken(){
+    log.debug "Doing fresh login for new access token."
+    String code_verifier = generateCodeVerifier()
+    String code_challenge = generateCodeChallange(code_verifier)
+    //log.trace "code_verifier: $code_verifier, code_challenge: $code_challenge"
+
+    def MYQ_API_CLIENT_ID = "IOS_CGI_MYQ"
+    def MYQ_API_CLIENT_SECRET = "VUQ0RFhuS3lQV3EyNUJTdw=="
+    def MYQ_API_REDIRECT_URI = "com.myqops://ios"
+    def MYQ_GRANT_TYPE = "authorization_code"
+    def authEndpoint = "https://partner-identity.myq-cloud.com"
+    def authPath = "/connect/authorize"
+    def tokenPath = "/connect/token"
+    def searchParams = [
+        client_id: "IOS_CGI_MYQ",
+        code_challenge: code_challenge,
+        code_challenge_method: "S256",
+        redirect_uri: "com.myqops://ios",
+        response_type: "code",
+        scope: "MyQ_Residential offline_access"
+    ]
+
+
+    //log.debug searchParams
+    def authHeaders = [
+        "User-Agent": "null",
+        contentType: "text/plain"
+    ]
+
+    def loginPostUrl
+    def requestVerificationToken
+    def authpageCookie
+
+    //log.debug "${authEndpoint}${authPath}${searchParams}"
+    try {
+        httpGet([ uri: authEndpoint, path: authPath, query: searchParams, headers: authHeaders]) { response ->
+            //log.debug "auth data text response ${response.data}"
+            def doc = response.data
+            requestVerificationToken = doc[0].children[1].children[0].children[0].children[2].children[2].attributes["value"]
+            loginPostUrl = doc[0].children[1].children[0].children[0].children[2].attributes["action"]
+
+            def cookieTest = response.headers["Set-Cookie"]
+            def cleanCookie = []
+            response.headers.each { header ->
+                //log.trace header
+                if (header.name == "Set-Cookie"){
+                    //log.trace "${header.name}:${header.value}"
+                    def cleanedCookie = header.value.split(";")[0]
+                    //log.debug "cleaned: ${cleanedCookie}"
+                    cleanCookie << cleanedCookie
+                }
+            }
+
+            authpageCookie = cleanCookie.join("; ")
+        }
+    } catch (e) {
+        log.error "Verification token status: ${e}"
+    }
+
+    log.debug "Got verification token:${requestVerificationToken}\nauthpageCookie:${authpageCookie}\nloginPostUrl:${authEndpoint}\n${loginPostUrl}"
+
+    if (!requestVerificationToken || !authpageCookie || !loginPostUrl) {
+        log.error "Cannot get verification token, auth cookie or login url"
+        return
+    }
+
+    def loginBody = [
+        "Email": settings.username,
+        "Password": settings.password,
+        "__RequestVerificationToken": requestVerificationToken
+    ]
+
+    def loginHeaders = [
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Cookie": authpageCookie,
+        "User-Agent": "null"
+    ]
+
+    def loginCookie = ""
+    def redirectUrl = ""
+    try {
+        httpPost([ uri: authEndpoint + loginPostUrl, headers: loginHeaders, body: loginBody]) { response ->
+            //log.debug "login response ${response.data}"
+            def cleanCookie = []
+            response.headers.each { header ->
+                //log.trace "header: ${header}"
+                if (header.name == "Set-Cookie"){
+                    //log.trace "Header -> ${header.name}-${header.value}"
+                    def cleanedCookie = header.value.split(";")[0]
+                    //log.debug "cleaned: ${cleanedCookie}"
+                    cleanCookie << cleanedCookie
+                }
+            }
+            loginCookie = cleanCookie.join("; ")
+            redirectUrl = response.headers["Location"].value
+        }
+    } catch (e) {
+        log.error "Login cookie status: ${e}"
+    }
+
+    //log.debug "Got redirectURL ${authEndpoint}\n${redirectUrl}\nloginCookie:${loginCookie}"
+
+    if (!redirectUrl || !loginCookie) {
+        log.error "Cannot get Authendpoint or Cookie"
+        return
+    }
+
+    def redirectHeaders = [
+        "Cookie": loginCookie,
+        "User-Agent": "null"
+    ]
+
+    //This step requires halting the redirect and grabbing the code from MyQ. Because we cannot do this with Groovy, we hand off the cookie and redirectURL to a cloud-hosted app.
+    // Note that the challenge verifier is NOT passed over, so the cloud app will not be able to login or actually generate a token for your account
+    log.trace "uri: ${authEndpoint + redirectUrl}, headers: ${redirectHeaders}"
+    def code
+    def scope
+    try {
+        httpPostJson([ uri: "http://brbeaird.herokuapp.com", path: "/getRedirectCode", headers: ["Content-Type": "application/json"], body: ["redirectUrl": authEndpoint + redirectUrl, "cookie": loginCookie]]) { response ->
+            //log.trace "Redirect response: ${response.status}\n${response.data}"
+            if (response.status == 200) {
+                code = response.data.code
+                scope = response.data.scope
+                //log.debug "Got code ${code}, scope: ${scope}"
+            } else {
+                log.warn "Failed to get redirect code"
+            }
+        }
+    } catch (e) {
+        log.error "Code status: ${e}"
+    }
+
+    if (!code || !scope) {
+        log.error "No code or scope returned"
+        return
+    }
+
+    def tokenRequestBody = [
+        "client_id": MYQ_API_CLIENT_ID,
+        "client_secret": new String(MYQ_API_CLIENT_SECRET.decodeBase64()),
+        "code": code,
+        "code_verifier": code_verifier,
+        "grant_type": MYQ_GRANT_TYPE,
+        "redirect_uri": MYQ_API_REDIRECT_URI,
+        "scope": scope
+    ].collect { k,v -> "${java.net.URLEncoder.encode(k, "UTF-8")}=${java.net.URLEncoder.encode(v, "UTF-8")}" }.join("&")
+
+    def tokenHeaders = [
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "null"
+    ]
+
+    //log.trace "$tokenRequestBody\n$tokenHeaders"
+
+    def refreshToken
+
+    try {
+    // "https://webhook.site/7ef2ea2d-441e-4f14-b4bd-b4ab4f458a49"
+        httpPost([ uri: authEndpoint + tokenPath, headers: tokenHeaders, body: tokenRequestBody]) { response ->
+            //log.debug "Token response ${response.status}"
+            if (response.status == 200) {
+                state.oauth.refreshToken = refreshToken
+                state.oauth.lastRefresh = now()
+                state.oauth.access_token = response.data.access_token
+                state.oauth.expiration = now() + (response.data.expires_in * 1000)
+                refreshToken = response.data.refresh_token
+                log.info "Successfully generated new access/refresh tokens"
+                return true
+            } else {
+                log.warn "Failed to get token: ${response.status}"
+                return false
+            }
+        }
+    } catch (e) {
+        log.error "Token status: ${e}"
+        return false
+    }
+}
+
+def byte[] randomGenerator(int n) {
+  return new Random().with {
+    (1..n).collect { nextInt(256) }
+  }
+}
+
+@Field final byte[] ENCODE_WEBSAFE = [
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+        'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+        'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+        'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '_',
+        ]
+
+private encodeBase64Url(byte[] input) {
+    /**
+    * Emit a new line every this many output tuples.  Corresponds to
+    * a 76-character line length (the maximum allowable according to
+    * <a href="http://www.ietf.org/rfc/rfc2045.txt">RFC 2045</a>).
+    */
+    final int LINE_GROUPS = 19
+
+    int offset = 0
+    int len = input.length
+    boolean finish = true
+
+    boolean do_padding = false
+    boolean do_newline = false
+    boolean do_cr = false
+    byte[] alphabet = ENCODE_WEBSAFE
+
+    byte[] tail = new byte[2]
+    int tailLen = 0
+    int count = do_newline ? LINE_GROUPS : -1
+
+    // Compute the exact length of the array we will produce.
+    int output_len = len / 3 * 4
+
+    // Account for the tail of the data and the padding bytes, if any.
+    if (do_padding) {
+        if (len % 3 > 0) {
+            output_len += 4
+        }
+    } else {
+        switch (len % 3) {
+            case 0: break
+            case 1: output_len += 2
+            break
+            case 2: output_len += 3
+            break
+        }
+    }
+
+    // Account for the newlines, if any.
+    if (do_newline && len > 0) {
+        output_len += (((len-1) / (3 * LINE_GROUPS)) + 1) *
+            (do_cr ? 2 : 1)
+    }
+
+    // Using local variables makes the encoder about 9% faster.
+    byte[] output = new byte[output_len]
+    int op = 0
+
+    int p = offset
+    len += offset
+    int v = -1
+
+    // First we need to concatenate the tail of the previous call
+    // with any input bytes available now and see if we can empty
+    // the tail.
+
+    switch (tailLen) {
+        case 0:
+        // There was no tail.
+        break
+
+        case 1:
+        if (p+2 <= len) {
+            // A 1-byte tail with at least 2 bytes of
+            // input available now.
+            v = ((tail[0] & 0xff) << 16) |
+                ((input[p++] & 0xff) << 8) |
+                (input[p++] & 0xff)
+            tailLen = 0
+        }
+        break
+
+        case 2:
+        if (p+1 <= len) {
+            // A 2-byte tail with at least 1 byte of input.
+            v = ((tail[0] & 0xff) << 16) |
+                ((tail[1] & 0xff) << 8) |
+                (input[p++] & 0xff)
+            tailLen = 0
+        }
+        break
+    }
+
+    if (v != -1) {
+        output[op++] = alphabet[(v >> 18) & 0x3f]
+        output[op++] = alphabet[(v >> 12) & 0x3f]
+        output[op++] = alphabet[(v >> 6) & 0x3f]
+        output[op++] = alphabet[v & 0x3f]
+        if (--count == 0) {
+            if (do_cr) output[op++] = (byte)'\r'
+            output[op++] = (byte)'\n'
+            count = LINE_GROUPS
+        }
+    }
+
+    // At this point either there is no tail, or there are fewer
+    // than 3 bytes of input available.
+
+    // The main loop, turning 3 input bytes into 4 output bytes on
+    // each iteration.
+    while (p+3 <= len) {
+        v = ((input[p] & 0xff) << 16) |
+            ((input[p+1] & 0xff) << 8) |
+            (input[p+2] & 0xff)
+        output[op] = alphabet[(v >> 18) & 0x3f]
+        output[op+1] = alphabet[(v >> 12) & 0x3f]
+        output[op+2] = alphabet[(v >> 6) & 0x3f]
+        output[op+3] = alphabet[v & 0x3f]
+        p += 3
+        op += 4
+        if (--count == 0) {
+            if (do_cr) output[op++] = (byte)'\r'
+            output[op++] = (byte)'\n'
+            count = LINE_GROUPS
+        }
+    }
+
+    if (finish) {
+        // Finish up the tail of the input.  Note that we need to
+        // consume any bytes in tail before any bytes
+        // remaining in input there should be at most two bytes
+        // total.
+
+        if (p-tailLen == len-1) {
+            int t = 0
+            v = ((tailLen > 0 ? tail[t++] : input[p++]) & 0xff) << 4
+            tailLen -= t
+            output[op++] = alphabet[(v >> 6) & 0x3f]
+            output[op++] = alphabet[v & 0x3f]
+            if (do_padding) {
+                output[op++] = (byte)'='
+                output[op++] = (byte)'='
+            }
+            if (do_newline) {
+                if (do_cr) output[op++] = (byte)'\r'
+                output[op++] = (byte)'\n'
+            }
+        } else if (p-tailLen == len-2) {
+            int t = 0
+            v = (((tailLen > 1 ? tail[t++] : input[p++]) & 0xff) << 10) |
+                (((tailLen > 0 ? tail[t++] : input[p++]) & 0xff) << 2)
+            tailLen -= t
+            output[op++] = alphabet[(v >> 12) & 0x3f]
+            output[op++] = alphabet[(v >> 6) & 0x3f]
+            output[op++] = alphabet[v & 0x3f]
+            if (do_padding) {
+                output[op++] = (byte)'='
+            }
+            if (do_newline) {
+                if (do_cr) output[op++] = (byte)'\r'
+                output[op++] = (byte)'\n'
+            }
+        } else if (do_newline && op > 0 && count != LINE_GROUPS) {
+            if (do_cr) output[op++] = (byte)'\r'
+            output[op++] = (byte)'\n'
+        }
+
+        if (tailLen != 0) {
+            log.error "Taillen != 0: $tailLen"
+        }
+        if (p != len) {
+            log.error "p != len: $p,$len"
+        }
+    } else {
+        // Save the leftovers in tail to be consumed on the next
+        // call to encodeInternal.
+
+        if (p == len-1) {
+            tail[tailLen++] = input[p]
+        } else if (p == len-2) {
+            tail[tailLen++] = input[p]
+            tail[tailLen++] = input[p+1]
+        }
+    }
+
+    if (op != output_len) {
+        //log.error "op != output_len: $op,$output_len"
+
+        // Strip the last 2 extra padding bytes
+        byte[] tmp = new byte[output.length - 2]
+        for (int i = 0; i < output.length - 2; i++) {
+            tmp[i] = output[i]
+        }
+
+        return tmp
+    } else {
+        return output
+    }
+}
+
+def byte[] base64EncodeUrlSafe(byte[] data) {
+    byte[] encode = data.encodeBase64(true).toString() //data.collect { it as char }
+    //log.trace "${encode.size()}:${encode}"
+    for (int i = 0; i < encode.length; i++) {
+        if (encode[i] == '+') {
+            encode[i] = '-'
+        } else if (encode[i] == '/') {
+            encode[i] = '_'
+        }
+    }
+    return encode
+}
+
+String generateCodeVerifier() {
+    byte[] codeVerifier = randomGenerator(32)
+    //log.trace "${codeVerifier}\n${encodeBase64Url(codeVerifier)}"
+    return new String(encodeBase64Url(codeVerifier), "ISO_8859_1")
+}
+
+String generateCodeChallange(String codeVerifier) {
+    //log.trace "${codeVerifier.size()},${codeVerifier}"
+    byte[] bytes = codeVerifier.getBytes("US-ASCII")
+    MessageDigest messageDigest = MessageDigest.getInstance("SHA-256")
+    messageDigest.update(bytes, 0, bytes.length)
+    byte[] digest = messageDigest.digest()
+    //log.debug "${codeVerifier}\n${bytes}\n${digest}\n${digest.encodeBase64()}"
+    return new String(encodeBase64Url(digest), "ISO_8859_1")
 }
