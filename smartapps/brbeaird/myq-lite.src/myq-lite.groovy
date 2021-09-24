@@ -39,6 +39,8 @@ definition(
 	iconX3Url: "https://raw.githubusercontent.com/brbeaird/SmartThings_MyQ/master/icons/myq@3x.png"
 )
 
+appSetting "MyQToken"
+
 preferences {
 	page(name: "mainPage", title: "MyQ Lite")
     page(name: "prefLogInMethod", title: "MyQ")
@@ -50,8 +52,6 @@ preferences {
     page(name: "summary", title: "MyQ")
     page(name: "prefUninstall", title: "MyQ")
 }
-
-appSetting "MyQToken"
 
 def appInfoSect(sect=true)	{
 	def str = ""
