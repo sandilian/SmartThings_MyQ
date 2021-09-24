@@ -39,10 +39,10 @@ definition(
 	iconX3Url: "https://raw.githubusercontent.com/brbeaird/SmartThings_MyQ/master/icons/myq@3x.png"
 )
 
-appSetting "MyQToken"
-
 preferences {
 	page(name: "mainPage", title: "MyQ Lite")
+    page(name: "prefLogInMethod", title: "MyQ")
+    page(name: "prefLogIn", title: "MyQ")
     page(name: "loginResultPage", title: "MyQ")
 	page(name: "prefListDevices", title: "MyQ")
     page(name: "sensorPage", title: "MyQ")
@@ -50,6 +50,8 @@ preferences {
     page(name: "summary", title: "MyQ")
     page(name: "prefUninstall", title: "MyQ")
 }
+
+appSetting "MyQToken"
 
 def appInfoSect(sect=true)	{
 	def str = ""
@@ -63,8 +65,9 @@ def mainPage() {
         state.previousVersion = 0;
     }
 
-    if (!state.oauth)
-    	state.oauth = [:]
+    if (!state.oauth){
+        state.oauth = [access_token: "", expiration: now() - 10000]
+    }
 
     //Brand new install (need to grab version info)
     if (!state.latestVersion){
@@ -78,6 +81,12 @@ def mainPage() {
         state.previousVersion = appVersion()
     }
 
+    //If fresh install, go straight to login page
+    if (!settings.loginMethod){
+    	state.lastPage = "prefListDevices"
+        return prefLogInMethod()
+    }
+
      state.lastPage = "mainPage"
 
     dynamicPage(name: "mainPage", nextPage: "", uninstall: false, install: true) {
@@ -86,13 +95,12 @@ def mainPage() {
         def refreshMinutesAgo = state.oauth?.lastRefresh ? (now() - state.oauth?.lastRefresh) / 1000 / 60 : 0
         def lastRefresh = state.oauth?.lastRefresh ? "Last refresh: ${Math.round(refreshMinutesAgo)} minutes ago." : "(not yet refreshed)"
         def loginMessage = "Token loaded. ${lastRefresh}"
-
-
-        if (!appSettings.MyQToken || appSettings.MyQToken == "")
-        	loginMessage = "Missing MyQToken in app settings. Login to the IDE and add it."
+        def authMethod = loginMethod == "Email/Password" ? "Email (${settings.username})" : "Manual token"
 
         section("MyQ Account"){
+            paragraph title: "", "Auth method: ${authMethod}"
             paragraph title: "", "Auth status: ${loginMessage}"
+            href "prefLogInMethod", title: "", description: "Tap to modify account", params: [nextPageName: "mainPage"]
         }
         section("Connected Devices") {
         	paragraph title: "", "${devs?.size() ? devs?.join("\n") : "No MyQ Devices Connected"}"
@@ -149,7 +157,7 @@ def refreshChildren(){
         	devName = devName + " (${child.currentSwitch})  ${myQId}"
             state.currentVersion['LightDevice'] = child.showVersion()
         }
-        else if (child.typeName == "Virtual Switch"){
+        else if (child.typeName == "MyQ Action Switch"){
         	useButtons = 1
         }
         else{
@@ -163,14 +171,68 @@ def refreshChildren(){
 }
 
 /* Preferences */
+def prefLogInMethod(params) {
+	return dynamicPage(name: "prefLogInMethod", title: "Connect to MyQ", nextPage:"prefLogIn", uninstall:false, install: false, submitOnChange: true) {
+		section("Login Method"){
+			paragraph "Choose your login method. Email/Password is the recommend option, but you may also choose to provide a manually-generated refresh token."
+            input(name: "loginMethod", type: "enum", title: "Login Method", options: ["Email/Password","Manual Token"])
+		}
+    }
+}
+
+
+def prefLogIn(params) {
+    state.installMsg = ""
+    def showUninstall = username != null && password != null
+	return dynamicPage(name: "prefLogIn", title: "Connect to MyQ", nextPage:"loginResultPage", uninstall:false, install: false, submitOnChange: true) {
+		if (loginMethod == "Email/Password"){
+                section("Login Credentials"){
+                input("username", "email", title: "Username", description: "MyQ Username (email address)")
+                input("password", "password", title: "Password", description: "MyQ password")
+		    }
+        }
+        else{
+            section("Advanced (optional)"){
+                paragraph "Manual refresh token entry: enter a manually-generated refresh token below if you prefer that the SmartApp not handle generating it. " +
+                    "Note that this may result in more frequent auth issues and you may need to enter a fresh token here occasionally."
+                input "manualRefreshToken", "password", required: false, title: "Manual refresh token"
+            }
+        }
+	}
+}
+
+def loginResultPage(){
+	log.debug "login result next page: ${state.lastPage}"
+
+    //If manual refresh token has been changed, use it
+    if (manualRefreshToken != state.oauth.lastManualRefreshToken){
+    	log.debug "Using new manual refresh token."
+        state.oauth.refreshToken = manualRefreshToken
+        state.oauth.lastManualRefreshToken = manualRefreshToken
+	}
+    if (login()) {
+    	if (state.lastPage == "prefListDevices")
+        	return prefListDevices()
+        else
+        	return mainPage()
+    }
+    else{
+    	def loginError = manualRefreshToken ? "Login failed with manual token. " : "The username or password you entered is incorrect. "
+        loginError += "Go back and try again."
+        return dynamicPage(name: "loginResultPage", title: "Login Error", install:false, uninstall:false) {
+			section(""){
+				paragraph loginError
+			}
+		}
+    }
+}
+
 def prefUninstall() {
     log.debug "Removing MyQ Devices..."
-    def msg = ""
+    def msg = "Devices have been removed. Tap the three dots in the top right and then Delete to complete the process."
     childDevices.each {
 		try{
 			deleteChildDevice(it.deviceNetworkId, true)
-            msg = "Devices have been removed. Tap the three dots in the top right and then Delete to complete the process."
-
 		}
 		catch (e) {
 			log.debug "Error deleting ${it.deviceNetworkId}: ${e}"
@@ -260,12 +322,12 @@ def sensorPage() {
     	state.validatedDoors = doors	//Handle single door
     }
 
-    return dynamicPage(name: "sensorPage",  title: "Optional Sensors and Push Buttons", nextPage:"summary", install:false, uninstall:false) {
+    return dynamicPage(name: "sensorPage",  title: "Optional Sensors and Action Switches", nextPage:"summary", install:false, uninstall:false) {
         def sensorCounter = 1
         state.validatedDoors.each{ door ->
             section("Setup options for " + state.MyQDataPending[door].name){
                 input "door${sensorCounter}Sensor",  "capability.contactSensor", required: false, multiple: false, title: state.MyQDataPending[door].name + " Contact Sensor"
-                input "prefDoor${sensorCounter}PushButtons", "bool", required: false, title: "Create separate on/off switches?"
+                input "prefDoor${sensorCounter}PushButtons", "bool", required: false, title: "Create separate on/off action switches?"
             }
             sensorCounter++
             state.useSensors = 1
@@ -537,7 +599,7 @@ def verifyChildDeviceIds(){
 	//Try to match existing child devices with latest MyQ data
     childDevices.each { child ->
         def matchingId
-        if (child.typeName != 'Virtual Switch'){
+        if (child.typeName != 'MyQ Action Switch' && child.typeName != 'Virtual Switch'){
             //Look for a matching entry in MyQ
             state.data.each { myQId, myQData ->
                 if (child.getMyQDeviceId() == myQId){
@@ -601,6 +663,7 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
                     log.debug "Type needs updating to no-sensor version"
                     existingDev.deviceType = noSensorTypeName
                     state.installMsg = state.installMsg + doorName + ": changed door device to No-sensor version." + "\r\n\r\n"
+                    existingDev.resetToUnknown()
                 }
                 catch(physicalgraph.exception.NotFoundException e)
                 {
@@ -661,6 +724,7 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
                     childDoor = addChildDevice("brbeaird", noSensorTypeName, DNI, getHubID(), ["name": doorName])
                     childDoor.updateMyQDeviceId(myQDeviceId, myQAccountId)
                     state.installMsg = state.installMsg + doorName + ": created door device (no-sensor version) \r\n\r\n"
+                    childDoor.resetToUnknown()
                 }
                 catch(physicalgraph.app.exception.UnknownDeviceTypeException e)
                 {
@@ -671,32 +735,36 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
             state.data[door].child = childDoor.deviceNetworkId
         }
 
-        //Create push button devices
+        //Create action switch devices
         if (prefPushButtons){
         	def existingOpenButtonDev = getChildDevice(door + " Opener")
             def existingCloseButtonDev = getChildDevice(door + " Closer")
             if (!existingOpenButtonDev){
                 try{
-                	def openButton = addChildDevice("brbeaird", "Virtual Switch", door + " Opener", getHubID(), [name: doorName + " Opener", label: doorName + " Opener"])
+                	def openButton = addChildDevice("brbeaird", "MyQ Action Switch", door + " Opener", getHubID(), [name: doorName + " Opener", label: doorName + " Opener"])
                     openButton.off()
-                	state.installMsg = state.installMsg + doorName + ": created push button device. \r\n\r\n"
+                	state.installMsg = state.installMsg + doorName + ": created action switch device. \r\n\r\n"
                 	subscribe(openButton, "switch.on", doorButtonOpenHandler)
                 }
                 catch(physicalgraph.app.exception.UnknownDeviceTypeException e)
                 {
                     log.debug "Error! " + e
-                    state.installMsg = state.installMsg + doorName + ": problem creating virtual switch device. Check your IDE to make sure the brbeaird : Virtual Switch device handler is installed and published. \r\n\r\n"
+                    state.installMsg = state.installMsg + doorName + ": problem creating MyQ Action Switch device. Check your IDE to make sure the brbeaird : MyQ Action Switch device handler is installed and published. \r\n\r\n"
                 }
             }
             else{
-            	subscribe(existingOpenButtonDev, "switch.on", doorButtonOpenHandler)
-                state.installMsg = state.installMsg + doorName + ": push button device already exists. Subscription recreated. \r\n\r\n"
+            	log.debug "Switch needs updating to new Action Type version"
+                existingOpenButtonDev.deviceType = "MyQ Action Switch"
+                subscribe(existingOpenButtonDev, "switch.on", doorButtonOpenHandler)
+                state.installMsg = state.installMsg + doorName + ": Open action switch device already exists. Subscription recreated. \r\n\r\n"
                 log.debug "subscribed to button: " + existingOpenButtonDev
             }
 
             if (!existingCloseButtonDev){
                 try{
-                    def closeButton = addChildDevice("brbeaird", "Virtual Switch", door + " Closer", getHubID(), [name: doorName + " Closer", label: doorName + " Closer"])
+                    log.debug "Switch needs updating to new Action Type version"
+                    existingDev.deviceType = "MyQ Action Switch"
+                    def closeButton = addChildDevice("brbeaird", "MyQ Action Switch", door + " Closer", getHubID(), [name: doorName + " Closer", label: doorName + " Closer"])
                     closeButton.off()
                     subscribe(closeButton, "switch.on", doorButtonCloseHandler)
                 }
@@ -706,11 +774,15 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
                 }
             }
             else{
+                log.debug "Switch needs updating to new Action Type version"
+                existingCloseButtonDev.deviceType = "MyQ Action Switch"
                 subscribe(existingCloseButtonDev, "switch.on", doorButtonCloseHandler)
+                state.installMsg = state.installMsg + doorName + ": Close action switch device already exists. Subscription recreated. \r\n\r\n"
+                log.debug "subscribed to button: " + existingOpenButtonDev
             }
         }
 
-        //Cleanup defunct push button devices if no longer wanted
+        //Cleanup defunct action switch devices if no longer wanted
         else{
         	def pushButtonIDs = [door + " Opener", door + " Closer"]
             def devsToDelete = getChildDevices().findAll { pushButtonIDs.contains(it.deviceNetworkId)}
@@ -721,8 +793,7 @@ def createChilDevices(door, sensor, doorName, prefPushButtons){
                 	deleteChildDevice(it.deviceNetworkId, true)
                     state.installMsg = state.installMsg + "Removed ${it}. \r\n\r\n"
                 } catch (e){
-                	//sendPush("Warning: unable to delete virtual on/off push button - you'll need to manually remove it.")
-                    state.installMsg = state.installMsg + "Warning: unable to delete virtual on/off push button - you'll need to manually remove it. \r\n\r\n"
+                    state.installMsg = state.installMsg + "Warning: unable to delete action switch - you'll need to manually remove it. \r\n\r\n"
                     log.debug "Error trying to delete button " + it + " - " + e
                     log.debug "Button  is likely in use in a Routine, or SmartApp (make sure and check SmarTiles!)."
                 }
@@ -854,14 +925,24 @@ def getSelectedDevices( settingsName ) {
 
 /* Access Management */
 private login() {
-	if (!appSettings.MyQToken){
-    	log.warn "Missing refresh token in app settings."
-        return false
-    }
+
+   //If people still have an app setting but no new manual pref entry yet, use that one
+   if (loginMethod != "Email/Password" && !manualRefreshToken && appSettings.MyQToken != ""){
+       log.debug "Using legacy app setting method."
+       state.oauth.refreshToken = appSettings.MyQToken;
+   }
+
+   //If we do not have a refresh token and a manual one wasn't entered, automatically fetch a new one using the email/password oauth flow
+   if (!state.oauth?.refreshToken && !manualRefreshToken){
+       if (!getNewAccessToken()){
+           return
+       }
+   }
+
+   //If the access token has expired, use the refresh token to get a new one
    if (!state.oauth?.expiration || now() > state?.oauth.expiration){
-       log.warn "Token has expired. Logging in again."
-       def refreshToken = appSettings.MyQToken
-       if (!doLogin(refreshToken)){
+       log.warn "Token has expired (${state.oauth.expiration}). Using refresh token to get new access token."
+       if (!doLogin()){
 			return false
         }
    }
@@ -869,20 +950,15 @@ private login() {
 }
 
 
-private doLogin(refreshToken) {
+private doLogin() {
     try {
-
-        if (!state.oauth){
-        	state.oauth = [access_token: "", expiration: now() - 10000]
-		}
-
         def tokenBody = [
 			"client_id": "IOS_CGI_MYQ",
             "client_secret": "UD4DXnKyPWq25BSw",
             "grant_type": "refresh_token",
             "redirect_uri": "com.myqops://ios",
             "scope": "MyQ_Residential offline_access",
-            "refresh_token": appSettings.MyQToken
+            "refresh_token": state.oauth.refreshToken
         ]
 
         return httpPost([ uri: "https://partner-identity.myq-cloud.com", path: "/connect/token", headers: ["Content-Type": "application/x-www-form-urlencoded", "User-Agent": "null"], body: tokenBody ]) { response ->
@@ -891,7 +967,7 @@ private doLogin(refreshToken) {
             if (response.status == 200) {
                 state.oauth.lastRefresh = now()
                 state.oauth.access_token = response.data.access_token
-                appSettings.MyQToken = response.data.refresh_token
+                state.oauth.refreshToken = response.data.refresh_token
                 state.oauth.expiration = now() + (response.data.expires_in * 1000)
                 return true
             } else {
@@ -1030,7 +1106,15 @@ private apiPut(apiPath, apiBody = [], actionText = "") {
 
 def sendDoorCommand(myQDeviceId, myQAccountId, command) {
 	if (!myQAccountId){
-        myQAccountId = state.session.accountId  //Bandaid for people who haven't tapped through the modify menu yet to assign accountId to door device
+    	if (!state.session?.accountId){
+        	def doorError = "Door is missing accountId. Be sure you have the latest DTH installed and retry setup config."
+            log.error doorError
+            if (prefDoorErrorNotify){sendPush(doorError)}
+            return false
+        }
+        else{
+        	myQAccountId = state.session.accountId  //Bandaid for people who haven't tapped through the modify menu yet to assign accountId to door device
+        }
     }
     state.lastCommandSent = now()
     return apiPut("https://account-devices-gdo.myq-cloud.com/api/v5.2/Accounts/${myQAccountId}/door_openers/${myQDeviceId}/${command}")
@@ -1038,7 +1122,18 @@ def sendDoorCommand(myQDeviceId, myQAccountId, command) {
 }
 
 def sendLampCommand(myQDeviceId, myQAccountId, command) {
-	state.lastCommandSent = now()
+	if (!myQAccountId){
+    	if (!state.session?.accountId){
+        	def lampError = "Lamp is missing accountId. Be sure you have the latest DTH installed and retry setup config."
+            log.error lampError
+            if (prefDoorErrorNotify){sendPush(lampError)}
+            return false
+        }
+        else{
+        	myQAccountId = state.session.accountId  //Bandaid for people who haven't tapped through the modify menu yet to assign accountId to door device
+        }
+    }
+    state.lastCommandSent = now()
     return apiPut("https://account-devices-lamp.myq-cloud.com/api/v5.2/Accounts/${myQAccountId}/lamps/${myQDeviceId}/${command}")
 }
 
